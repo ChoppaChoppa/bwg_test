@@ -21,5 +21,8 @@ func (h *Handler) Input(c echo.Context) error {
 		})
 	}
 
-	return c.JSON(http.StatusOK, models.Response{Code: http.StatusOK})
+	return c.JSON(http.StatusOK, models.Response{
+		Data: "транзакция принята в обработку",
+		Code: http.StatusOK,
+	})
 }
