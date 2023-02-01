@@ -15,11 +15,13 @@ CREATE TABLE balances
 
 CREATE TABLE transactions
 (
-    id      SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users (id) NOT NULL,
-    status  INTEGER                       NOT NULL,
-    type    INTEGER                       NOT NULL,
-    amount  DECIMAL                       NOT NULL
+    id       SERIAL PRIMARY KEY,
+    user_id  INTEGER REFERENCES users (id) NOT NULL,
+    attempts INTEGER                       NOT NULL
+        CONSTRAINT check_attempts CHECK (0 < attempts AND attempts < 5),
+    status   INTEGER                       NOT NULL,
+    type     INTEGER                       NOT NULL,
+    amount   DECIMAL                       NOT NULL
         CONSTRAINT positive_balance CHECK (amount > 0),
-    date    TIMESTAMPTZ                   NOT NULL DEFAULT now()
+    date     TIMESTAMP                     NOT NULL DEFAULT now()
 );
