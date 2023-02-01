@@ -7,19 +7,22 @@ import (
 	"sync"
 )
 
-const maxTransactionCount = 10
+const (
+	maxTransactionCount = 10
+	maxAmountCount      = 5
+)
 
 type IStorage interface {
-	InputTransaction(ctx context.Context, transaction *models.Transaction) (float64, error)
-	OutputTransaction(ctx context.Context, transaction *models.Transaction) (float64, error)
+	InputTransaction(ctx context.Context, transaction *models.Transaction) error
+	OutputTransaction(ctx context.Context, transaction *models.Transaction) error
 	NewTransaction(ctx context.Context, transaction *models.Transaction) error
+	DeleteTransaction(ctx context.Context, transaction *models.Transaction) error
 	UnhandledTransactions(ctx context.Context) ([]*models.Transaction, error)
 }
 
 type service struct {
 	logger  zerolog.Logger
 	storage IStorage
-	users   map[int]*models.UserTransaction
 	wg      *sync.WaitGroup
 }
 
@@ -27,13 +30,68 @@ func New(ctx context.Context, logger zerolog.Logger, storage IStorage) *service 
 	svc := &service{
 		logger:  logger,
 		storage: storage,
-		users:   make(map[int]*models.UserTransaction),
 		wg:      &sync.WaitGroup{},
 	}
 
 	go svc.GetUnhandledTransactions(ctx)
 
 	return svc
+}
+
+func (s *service) GetUnhandledTransactions(ctx context.Context) error {
+	for {
+		transactions, err := s.storage.UnhandledTransactions(ctx)
+		if err != nil {
+			s.logger.Error().Err(err).Msg("failed to get unhandled tx")
+			return err
+		}
+
+		s.wg.Add(1)
+		go func() {
+			if err = s.transactionHandler(ctx, transactions); err != nil {
+				s.logger.Error().Err(err).Msg("transaction handler err")
+			}
+		}()
+
+		s.wg.Wait()
+	}
+}
+
+func (s *service) transactionHandler(ctx context.Context, transactions []*models.Transaction) error {
+	if len(transactions) > maxTransactionCount {
+		s.wg.Add(1)
+		go func() {
+			if err := s.transactionHandler(ctx, transactions[maxTransactionCount:]); err != nil {
+				s.logger.Error().Err(err).Msg("transaction handler")
+			}
+		}()
+		transactions = transactions[:maxTransactionCount]
+	}
+
+	for _, v := range transactions {
+		if v.Amount == maxAmountCount {
+			if err := s.storage.DeleteTransaction(ctx, v); err != nil {
+				s.logger.Error().Err(err).Msg("failed to delete transaction")
+			}
+			continue
+		}
+
+		switch v.Type {
+		case int(models.InputType):
+			if err := s.storage.InputTransaction(ctx, v); err != nil {
+				s.logger.Error().Err(err).Msg("filed to do input transaction")
+			}
+			break
+		case int(models.OutputType):
+			if err := s.storage.OutputTransaction(ctx, v); err != nil {
+				s.logger.Error().Err(err).Msg("filed to do output transaction")
+			}
+			break
+		}
+	}
+
+	s.wg.Done()
+	return nil
 }
 
 func (s *service) Input(ctx context.Context, transaction *models.Transaction) error {
@@ -70,54 +128,6 @@ func (s *service) Output(ctx context.Context, transaction *models.Transaction) e
 	return nil
 }
 
-func (s *service) GetUnhandledTransactions(ctx context.Context) error {
-	for {
-		transactions, err := s.storage.UnhandledTransactions(ctx)
-		if err != nil {
-			s.logger.Error().Err(err).Msg("failed to get unhandled tx")
-			return err
-		}
-
-		s.wg.Add(1)
-		go func() {
-			if err = s.transactionHandler(ctx, transactions); err != nil {
-				s.logger.Error().Err(err).Msg("transaction handler err")
-			}
-		}()
-
-		s.wg.Wait()
-	}
-}
-
-func (s *service) transactionHandler(ctx context.Context, transactions []*models.Transaction) error {
-	if len(transactions) > maxTransactionCount {
-		s.wg.Add(1)
-		//TODO: сделать обработчик ошибки чтобы подсчитывал кол-во неудачных попыток
-		go s.transactionHandler(ctx, transactions[maxTransactionCount:])
-		transactions = transactions[:maxTransactionCount]
-	}
-
-	for _, v := range transactions {
-		switch v.Type {
-		case int(models.InputType):
-			if _, err := s.storage.InputTransaction(ctx, v); err != nil {
-				s.logger.Error().Err(err).Msg("filed to do input transaction")
-				return err
-			}
-			break
-		case int(models.OutputType):
-			if _, err := s.storage.OutputTransaction(ctx, v); err != nil {
-				s.logger.Error().Err(err).Msg("filed to do output transaction")
-				return err
-			}
-			break
-		}
-	}
-
-	s.wg.Done()
-	return nil
-}
-
 func (s *service) validate(transaction *models.Transaction) error {
 	if transaction.Amount <= 0 {
 		return models.ErrWrongAmount
@@ -125,19 +135,3 @@ func (s *service) validate(transaction *models.Transaction) error {
 
 	return nil
 }
-
-//transactions, ok := s.users[transaction.UserID]
-//if ok {
-//if transactions.Active {
-//<-transactions.Ch
-//balance, err := s.storage.InputTransaction(ctx, transaction)
-//if err != nil {
-//return 0, err
-//}
-//
-////amount := transaction.Amount
-////balance := amount + 10
-////<-time.After(time.Duration(amount) * time.Second)
-//return balance, nil
-//}
-//}

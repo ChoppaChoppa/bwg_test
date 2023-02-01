@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"github.com/jmoiron/sqlx"
+	"strings"
 )
 
 type storage struct {
@@ -17,29 +18,74 @@ func New(conn *sqlx.DB) *storage {
 	}
 }
 
-func (s *storage) OutputTransaction(ctx context.Context, transaction *models.Transaction) (float64, error) {
-	transaction.Amount = transaction.Amount * -1
-	balance, err := s.updateBalance(ctx, transaction)
+func (s *storage) OutputTransaction(ctx context.Context, transaction *models.Transaction) error {
+	amount := transaction.Amount * -1
+	_, err := s.updateBalance(ctx, transaction, amount)
 	if err != nil {
-		return 0, err
+		if strings.EqualFold(err.Error(), models.ErrPositiveAmount.Error()) {
+			if err = s.addAttempt(ctx, transaction); err != nil {
+				return err
+			}
+		}
+		return err
 	}
 
-	return balance, nil
+	return nil
 }
 
-func (s *storage) InputTransaction(ctx context.Context, transaction *models.Transaction) (float64, error) {
-	balance, err := s.updateBalance(ctx, transaction)
+func (s *storage) InputTransaction(ctx context.Context, transaction *models.Transaction) error {
+	_, err := s.updateBalance(ctx, transaction, transaction.Amount)
 	if err != nil {
-		return 0, err
+		if strings.EqualFold(err.Error(), models.ErrPositiveAmount.Error()) {
+			if err = s.addAttempt(ctx, transaction); err != nil {
+				return err
+			}
+		}
+		return err
 	}
 
-	return balance, err
+	return err
+}
+
+func (s *storage) addAttempt(ctx context.Context, transaction *models.Transaction) error {
+	query := `
+		UPDATE transactions
+		SET attempts = attempts + 1
+		WHERE transactions.id = $1
+		RETURNING attempts
+	`
+
+	if err := s.conn.QueryRowContext(ctx, query, transaction.ID).Scan(&transaction.Attempts); err != nil {
+		return err
+	}
+
+	if transaction.Attempts == 5 {
+		if err := s.DeleteTransaction(ctx, transaction); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *storage) DeleteTransaction(ctx context.Context, transaction *models.Transaction) error {
+	query := `
+		UPDATE transactions
+		SET status = $1
+		WHERE id = $2 AND attempts = 5
+	`
+
+	if _, err := s.conn.ExecContext(ctx, query, models.ProcessingErr, transaction.ID); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *storage) NewTransaction(ctx context.Context, transaction *models.Transaction) error {
 	query := `
-		INSERT INTO transactions(user_id, status, type, amount, date)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO transactions(user_id, status, type, amount)
+		VALUES ($1, $2, $3, $4)
 	`
 
 	_, err := s.conn.ExecContext(ctx, query,
@@ -47,7 +93,6 @@ func (s *storage) NewTransaction(ctx context.Context, transaction *models.Transa
 		transaction.Status,
 		transaction.Type,
 		transaction.Amount,
-		transaction.Date,
 	)
 	if err != nil {
 		return err
@@ -71,7 +116,7 @@ func (s *storage) UnhandledTransactions(ctx context.Context) ([]*models.Transact
 	return transactions, nil
 }
 
-func (s storage) updateBalance(ctx context.Context, transaction *models.Transaction) (float64, error) {
+func (s *storage) updateBalance(ctx context.Context, transaction *models.Transaction, amount float64) (float64, error) {
 	queryUpdateTransaction := `
 		UPDATE transactions
 		SET status = $1
@@ -97,7 +142,7 @@ func (s storage) updateBalance(ctx context.Context, transaction *models.Transact
 	}
 
 	var balance float64
-	err = tx.QueryRowContext(ctx, queryUpdateBalance, transaction.Amount, transaction.UserID).Scan(&balance)
+	err = tx.QueryRowContext(ctx, queryUpdateBalance, amount, transaction.UserID).Scan(&balance)
 	if err != nil {
 		return 0, err
 	}

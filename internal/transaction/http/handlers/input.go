@@ -14,8 +14,12 @@ func (h *Handler) Input(c echo.Context) error {
 
 	err := h.service.Input(c.Request().Context(), &transaction)
 	if err != nil {
-		return err
+		return c.JSON(http.StatusBadRequest, models.Response{
+			Error:     true,
+			ErrorText: err.Error(),
+			Code:      http.StatusBadRequest,
+		})
 	}
 
-	return c.JSON(http.StatusOK, nil)
+	return c.JSON(http.StatusOK, models.Response{Code: http.StatusOK})
 }
