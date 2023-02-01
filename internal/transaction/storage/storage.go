@@ -22,6 +22,7 @@ func (s *storage) OutputTransaction(ctx context.Context, transaction *models.Tra
 	amount := transaction.Amount * -1
 	_, err := s.updateBalance(ctx, transaction, amount)
 	if err != nil {
+		//
 		if strings.EqualFold(err.Error(), models.ErrPositiveAmount.Error()) {
 			if err = s.addAttempt(ctx, transaction); err != nil {
 				return err
@@ -59,7 +60,7 @@ func (s *storage) addAttempt(ctx context.Context, transaction *models.Transactio
 		return err
 	}
 
-	if transaction.Attempts == 5 {
+	if transaction.Attempts == models.MaxAttemptsCount {
 		if err := s.DeleteTransaction(ctx, transaction); err != nil {
 			return err
 		}
@@ -72,7 +73,7 @@ func (s *storage) DeleteTransaction(ctx context.Context, transaction *models.Tra
 	query := `
 		UPDATE transactions
 		SET status = $1
-		WHERE id = $2 AND attempts = 5
+		WHERE id = $2
 	`
 
 	if _, err := s.conn.ExecContext(ctx, query, models.ProcessingErr, transaction.ID); err != nil {
@@ -84,12 +85,13 @@ func (s *storage) DeleteTransaction(ctx context.Context, transaction *models.Tra
 
 func (s *storage) NewTransaction(ctx context.Context, transaction *models.Transaction) error {
 	query := `
-		INSERT INTO transactions(user_id, status, type, amount)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO transactions(user_id, attempts, status, type, amount)
+		VALUES ($1, $2, $3, $4, $5)
 	`
 
 	_, err := s.conn.ExecContext(ctx, query,
 		transaction.UserID,
+		transaction.Attempts,
 		transaction.Status,
 		transaction.Type,
 		transaction.Amount,
@@ -103,9 +105,10 @@ func (s *storage) NewTransaction(ctx context.Context, transaction *models.Transa
 
 func (s *storage) UnhandledTransactions(ctx context.Context) ([]*models.Transaction, error) {
 	query := `
-		SELECT id, user_id, status, type, amount, date
+		SELECT id, user_id, attempts, status, type, amount, date
 		FROM transactions
 		WHERE status = $1
+		ORDER BY date
 	`
 
 	var transactions []*models.Transaction
@@ -116,11 +119,41 @@ func (s *storage) UnhandledTransactions(ctx context.Context) ([]*models.Transact
 	return transactions, nil
 }
 
+func (s *storage) GetTransactions(ctx context.Context, userID int) ([]*models.Transaction, error) {
+	query := `
+		SELECT user_id, attempts, status, type, amount, date
+		FROM transactions
+		WHERE user_id = $1
+	`
+
+	var transactions []*models.Transaction
+	if err := s.conn.SelectContext(ctx, &transactions, query, userID); err != nil {
+		return nil, err
+	}
+
+	return transactions, nil
+}
+
+func (s *storage) GetBalance(ctx context.Context, userID int) (*models.Balance, error) {
+	query := `
+		SELECT user_id, balance
+		FROM balances
+		WHERE user_id = $1
+	`
+
+	var balance models.Balance
+	if err := s.conn.GetContext(ctx, &balance, query, userID); err != nil {
+		return nil, err
+	}
+	return &balance, nil
+}
+
 func (s *storage) updateBalance(ctx context.Context, transaction *models.Transaction, amount float64) (float64, error) {
 	queryUpdateTransaction := `
 		UPDATE transactions
-		SET status = $1
-		WHERE user_id = $2
+		SET status = $1,
+		    attempts = attempts + 1
+		WHERE id = $2
 	`
 
 	queryUpdateBalance := `
@@ -136,7 +169,7 @@ func (s *storage) updateBalance(ctx context.Context, transaction *models.Transac
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx, queryUpdateTransaction, models.Processed, transaction.UserID)
+	_, err = tx.ExecContext(ctx, queryUpdateTransaction, models.Processed, transaction.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -7,17 +7,14 @@ import (
 	"sync"
 )
 
-const (
-	maxTransactionCount = 10
-	maxAmountCount      = 5
-)
-
 type IStorage interface {
 	InputTransaction(ctx context.Context, transaction *models.Transaction) error
 	OutputTransaction(ctx context.Context, transaction *models.Transaction) error
 	NewTransaction(ctx context.Context, transaction *models.Transaction) error
 	DeleteTransaction(ctx context.Context, transaction *models.Transaction) error
 	UnhandledTransactions(ctx context.Context) ([]*models.Transaction, error)
+	GetTransactions(ctx context.Context, userID int) ([]*models.Transaction, error)
+	GetBalance(ctx context.Context, userID int) (*models.Balance, error)
 }
 
 type service struct {
@@ -58,18 +55,18 @@ func (s *service) GetUnhandledTransactions(ctx context.Context) error {
 }
 
 func (s *service) transactionHandler(ctx context.Context, transactions []*models.Transaction) error {
-	if len(transactions) > maxTransactionCount {
+	if len(transactions) > models.MaxTransactionCount {
 		s.wg.Add(1)
 		go func() {
-			if err := s.transactionHandler(ctx, transactions[maxTransactionCount:]); err != nil {
+			if err := s.transactionHandler(ctx, transactions[models.MaxTransactionCount:]); err != nil {
 				s.logger.Error().Err(err).Msg("transaction handler")
 			}
 		}()
-		transactions = transactions[:maxTransactionCount]
+		transactions = transactions[:models.MaxTransactionCount]
 	}
 
 	for _, v := range transactions {
-		if v.Amount == maxAmountCount {
+		if v.Attempts >= models.MaxAttemptsCount {
 			if err := s.storage.DeleteTransaction(ctx, v); err != nil {
 				s.logger.Error().Err(err).Msg("failed to delete transaction")
 			}
@@ -95,6 +92,7 @@ func (s *service) transactionHandler(ctx context.Context, transactions []*models
 }
 
 func (s *service) Input(ctx context.Context, transaction *models.Transaction) error {
+	transaction.Attempts = 0
 	transaction.Status = int(models.InProcessing)
 	transaction.Type = int(models.InputType)
 
@@ -112,6 +110,7 @@ func (s *service) Input(ctx context.Context, transaction *models.Transaction) er
 }
 
 func (s *service) Output(ctx context.Context, transaction *models.Transaction) error {
+	transaction.Attempts = 0
 	transaction.Status = int(models.InProcessing)
 	transaction.Type = int(models.OutputType)
 
@@ -126,6 +125,26 @@ func (s *service) Output(ctx context.Context, transaction *models.Transaction) e
 	}
 
 	return nil
+}
+
+func (s *service) GetTransactions(ctx context.Context, userID int) ([]*models.Transaction, error) {
+	transactions, err := s.storage.GetTransactions(ctx, userID)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to get transactions")
+		return nil, err
+	}
+
+	return transactions, nil
+}
+
+func (s *service) GetBalance(ctx context.Context, userID int) (*models.Balance, error) {
+	balance, err := s.storage.GetBalance(ctx, userID)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to get balance")
+		return nil, err
+	}
+
+	return balance, nil
 }
 
 func (s *service) validate(transaction *models.Transaction) error {

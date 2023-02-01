@@ -9,6 +9,8 @@ import (
 type IService interface {
 	Input(ctx context.Context, transaction *models.Transaction) error
 	Output(ctx context.Context, transaction *models.Transaction) error
+	GetTransactions(ctx context.Context, userID int) ([]*models.Transaction, error)
+	GetBalance(ctx context.Context, userID int) (*models.Balance, error)
 }
 
 type Handler struct {

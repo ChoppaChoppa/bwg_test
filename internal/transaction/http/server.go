@@ -5,6 +5,8 @@ import "github.com/labstack/echo/v4"
 type IHandler interface {
 	Input(c echo.Context) error
 	Output(c echo.Context) error
+	GetTransactions(c echo.Context) error
+	GetBalance(c echo.Context) error
 }
 
 type Server struct {

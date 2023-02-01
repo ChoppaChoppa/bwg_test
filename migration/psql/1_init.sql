@@ -18,7 +18,7 @@ CREATE TABLE transactions
     id       SERIAL PRIMARY KEY,
     user_id  INTEGER REFERENCES users (id) NOT NULL,
     attempts INTEGER                       NOT NULL
-        CONSTRAINT check_attempts CHECK (0 < attempts AND attempts < 5),
+        CONSTRAINT check_attempts CHECK (0 <= attempts AND attempts <= 5),
     status   INTEGER                       NOT NULL,
     type     INTEGER                       NOT NULL,
     amount   DECIMAL                       NOT NULL

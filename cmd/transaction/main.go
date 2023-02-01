@@ -7,6 +7,7 @@ import (
 	"bwg_test/internal/transaction/http/handlers"
 	"bwg_test/internal/transaction/storage"
 	"context"
+	"fmt"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
@@ -29,9 +30,14 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to parse config")
 	}
 
-	conntectionStr := "user=admin password=admin dbname=postgres sslmode=disable"
+	connectionStr := ParseDBConnStr(
+		cfg.DataBase.Login,
+		cfg.DataBase.Password,
+		cfg.DataBase.DBName,
+		cfg.DataBase.SslMode,
+	)
 
-	conn, err := sqlx.Connect("postgres", conntectionStr)
+	conn, err := sqlx.Connect("postgres", connectionStr)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to connect db")
 	}
@@ -60,4 +66,13 @@ func main() {
 	if err = server.Shutdown(ctx); err != nil {
 		logger.Fatal().Err(err).Msg("server shutdown error")
 	}
+}
+
+func ParseDBConnStr(login, password, db, sslmode string) string {
+	return fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s",
+		login,
+		password,
+		db,
+		sslmode,
+	)
 }

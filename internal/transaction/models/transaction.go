@@ -2,6 +2,11 @@ package models
 
 import "time"
 
+const (
+	MaxTransactionCount = 10
+	MaxAttemptsCount    = 5
+)
+
 var (
 	ProcessingErr TransactionStatus = 0
 	InProcessing  TransactionStatus = 1
